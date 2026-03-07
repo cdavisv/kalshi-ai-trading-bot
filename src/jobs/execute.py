@@ -36,15 +36,43 @@ async def execute_position(
 
     if live_mode:
         try:
+            # Get current market prices to determine the appropriate price field
+            market_data = await kalshi_client.get_market(position.market_id)
+            market = market_data.get('market', {})
+            
+            # For market orders, use the ask price based on which side we're buying
+            side_lower = position.side.lower()
             client_order_id = str(uuid.uuid4())
-            order_response = await kalshi_client.place_order(
-                ticker=position.market_id,
-                client_order_id=client_order_id,
-                side=position.side.lower(),
-                action="buy",
-                count=position.quantity,
-                type_="market"
-            )
+            
+            # Prepare order parameters
+            order_params = {
+                "ticker": position.market_id,
+                "client_order_id": client_order_id,
+                "side": side_lower,
+                "action": "buy",
+                "count": position.quantity,
+                "type": "market"
+            }
+            
+            # Add the appropriate price field based on side
+            # For market orders, we use the ask price (what we're willing to pay)
+            if side_lower == "yes":
+                yes_ask = market.get('yes_ask', 0)
+                if yes_ask > 0:
+                    order_params["yes_price"] = yes_ask
+                else:
+                    logger.error(f"No valid yes_ask price for {position.market_id}: {yes_ask}")
+                    return False
+            else:  # side_lower == "no"
+                no_ask = market.get('no_ask', 0)
+                if no_ask > 0:
+                    order_params["no_price"] = no_ask
+                else:
+                    logger.error(f"No valid no_ask price for {position.market_id}: {no_ask}")
+                    return False
+            
+            logger.info(f"Placing order with params: {order_params}")
+            order_response = await kalshi_client.place_order(**order_params)
             
             # For a market order, the fill price is not guaranteed.
             # A more robust implementation would query the /fills endpoint
